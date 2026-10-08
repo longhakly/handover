@@ -201,10 +201,7 @@ def sanitize_secrets(text: str) -> str:
 
     return text
 
-def parse_user_goal(user_requests):
-    if not user_requests:
-        return "Unknown task"
-
+def extract_clean_prompts(user_requests):
     clean_prompts = []
     for req in user_requests:
         cleaned = re.sub(r"# Context from my IDE setup:.*?(## My request:\s*|\Z)", "", req, flags=re.DOTALL).strip()
@@ -214,17 +211,65 @@ def parse_user_goal(user_requests):
             extracted = req.split("## My request:")[-1].strip()
             if extracted:
                 clean_prompts.append(sanitize_secrets(extracted))
+        elif req.strip():
+            clean_prompts.append(sanitize_secrets(req.strip()))
+    return clean_prompts
 
-    if clean_prompts:
-        return clean_prompts[0]
-    return sanitize_secrets(user_requests[-1][:300])
+def parse_session_goals(user_requests):
+    clean_prompts = extract_clean_prompts(user_requests)
+    if not clean_prompts:
+        return {
+            "active_goal": "Unknown task",
+            "initial_goal": "Unknown task",
+            "recent_trajectory": [],
+        }
 
-def parse_problem_specification(user_requests, last_error=None):
-    raw_prompt = parse_user_goal(user_requests)
+    initial_goal = clean_prompts[0]
+    latest = clean_prompts[-1]
 
+    # Contextualize short continuation prompts with the preceding substantive turn
+    continuation_cues = [
+        "do it", "do this", "execute all", "execute", "proceed", "go ahead",
+        "yes", "ok", "sure", "continue", "fix it", "apply it", "next",
+        "do follow him", "start apply it", "please", "yes please", "done",
+        "now do it", "let's do it", "make it happen"
+    ]
+    is_continuation = len(latest.split()) <= 4 or any(latest.lower().startswith(cue) for cue in continuation_cues)
+
+    if is_continuation and len(clean_prompts) >= 2:
+        substantive = None
+        for prev in reversed(clean_prompts[:-1]):
+            prev_clean = prev.strip()
+            if len(prev_clean.split()) > 3 and not any(prev_clean.lower().startswith(cue) for cue in continuation_cues):
+                substantive = prev_clean
+                break
+        if substantive:
+            active_goal = f"{substantive} (Latest follow-up: {latest})"
+        else:
+            active_goal = f"{clean_prompts[-2]} -> {latest}"
+    else:
+        active_goal = latest
+
+    recent_trajectory = clean_prompts[-4:] if len(clean_prompts) > 1 else []
+
+    return {
+        "active_goal": active_goal,
+        "initial_goal": initial_goal,
+        "recent_trajectory": recent_trajectory,
+    }
+
+def parse_user_goal(user_requests):
+    """Returns the active task being worked on at the end of the session."""
+    return parse_session_goals(user_requests)["active_goal"]
+
+def parse_problem_specification(user_requests, last_error=None, active_goal=None):
+    if not active_goal:
+        active_goal = parse_session_goals(user_requests)["active_goal"]
+
+    raw_prompt = active_goal
     description = raw_prompt
-    current_behavior = "Baseline system state prior to changes."
-    desired_behavior = "Fulfill the requested task and changes according to specification."
+    current_behavior = "Baseline system state prior to recent changes."
+    desired_behavior = "Fulfill the active request and changes according to specification."
 
     curr_match = re.search(
         r"(?:current\s*behavior|currently|problem|issue):\s*(.*?)(?=(?:desired\s*behavior|expected|should|goal|\n\n|\Z))",
@@ -251,7 +296,7 @@ def parse_problem_specification(user_requests, last_error=None):
     if des_match and des_match.group(1).strip():
         desired_behavior = des_match.group(1).strip()
     else:
-        for kw in ["help ", "please ", "need to ", "should ", "fix ", "want to ", "clone ", "implement "]:
+        for kw in ["help ", "please ", "need to ", "should ", "fix ", "want to ", "clone ", "implement ", "add ", "remove ", "update "]:
             lower_p = raw_prompt.lower()
             if kw in lower_p:
                 idx = lower_p.find(kw)
@@ -319,8 +364,12 @@ def detect_guidelines(workspace_root):
     return "Follow clean architecture, minimal diffs, and existing project conventions."
 
 def generate_handover_content(workspace_root, details):
-    user_goal = parse_user_goal(details["user_requests"])
-    problem_spec = parse_problem_specification(details["user_requests"], details.get("last_error"))
+    session_goals = parse_session_goals(details["user_requests"])
+    active_goal = session_goals["active_goal"]
+    initial_goal = session_goals["initial_goal"]
+    recent_trajectory = session_goals["recent_trajectory"]
+
+    problem_spec = parse_problem_specification(details["user_requests"], details.get("last_error"), active_goal=active_goal)
     handover_reason = determine_handover_reason(details["last_error"], details["last_rate_limits"])
     model_name = details["model_name"]
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
@@ -346,8 +395,24 @@ def generate_handover_content(workspace_root, details):
                 first_line = msg.split("\n")[0]
                 completed_bullets.append(sanitize_secrets(first_line[:150]))
 
-    if not completed_bullets and agent_msgs:
-        completed_bullets = [sanitize_secrets(agent_msgs[0][:150])]
+    # Deduplicate completed bullets while preserving order
+    deduped_bullets = []
+    for b in completed_bullets:
+        if b not in deduped_bullets:
+            deduped_bullets.append(b)
+
+    # Fallback to latest agent message if no specific milestones matched, NEVER the first message from turn 1
+    if not deduped_bullets and agent_msgs:
+        deduped_bullets = [sanitize_secrets(agent_msgs[-1][:150])]
+
+    # Recent tool actions right before interruption
+    recent_tools = details.get("tool_actions", [])[-3:]
+    recent_tools_bullets = []
+    for t in recent_tools:
+        t_name = t.get("name", "tool")
+        t_inp = str(t.get("input", ""))
+        t_summary = t_inp.replace("\n", " ").strip()[:120]
+        recent_tools_bullets.append(f"`{t_name}`: `{sanitize_secrets(t_summary)}`")
 
     # Extract touched files cleanly from status blocks, ignoring diffstat blocks
     modified_files = []
@@ -384,26 +449,41 @@ def generate_handover_content(workspace_root, details):
                     if file_rel not in modified_files:
                         modified_files.append(file_rel)
 
-    completed_str = "\n".join([f"- {b}" for b in completed_bullets]) if completed_bullets else "- Initial review of requirements."
+    completed_str = "\n".join([f"- {b}" for b in deduped_bullets]) if deduped_bullets else "- Initial review of requirements."
     modified_str = "\n".join([f"- `{f}`" for f in modified_files]) if modified_files else "- None detected."
 
     # Immediate next steps
     next_steps = []
     if modified_files:
         next_steps.append(f"Review uncommitted changes in: {', '.join([f'`{f}`' for f in modified_files[:3]])}.")
+    next_steps.append(f"Resume and complete active requirements: {active_goal[:120]}.")
     next_steps.append("Run project test suite and verification commands.")
     next_steps.append("Complete any remaining requirements and run the mandatory final review.")
     next_steps_str = "\n".join([f"{i+1}. {step}" for i, step in enumerate(next_steps)])
+
+    trajectory_section = ""
+    if len(recent_trajectory) > 1 and initial_goal != active_goal:
+        turns_str = "\n".join([f"  - Turn {i+1}: {sanitize_secrets(t[:120])}" for i, t in enumerate(recent_trajectory)])
+        trajectory_section = f"""
+- **Session Trajectory**:
+  - **Initial Goal**: {sanitize_secrets(initial_goal[:150])}
+  - **Recent User Turns**:
+{turns_str}"""
+
+    tools_section = ""
+    if recent_tools_bullets:
+        tools_str = "\n".join([f"  - {b}" for b in recent_tools_bullets])
+        tools_section = f"\n- **Recent Actions Prior to Interruption**:\n{tools_str}"
 
     handover_md = f"""# Session Handover Document
 
 ## 1. Executive Context
 
-- **Task**: {user_goal}
+- **Active Task (In-Flight)**: {active_goal}
 - **Outgoing Model / Environment**: {model_name}
 - **Handover Trigger / Reason**: {handover_reason}
 - **Timestamp**: {now_str}
-- **Workspace Root**: `{workspace_root}`
+- **Workspace Root**: `{workspace_root}`{trajectory_section}
 
 ---
 
@@ -425,7 +505,7 @@ def generate_handover_content(workspace_root, details):
 
 - **Status**: Interrupted / Handover in progress
 - **Latest Summary from Outgoing Model**:
-  > {latest_summary}
+  > {latest_summary}{tools_section}
 
 ---
 
@@ -481,13 +561,13 @@ You are continuing a task handed over from {model_name}.
 Please read `HANDOVER.md` in the project root to understand the full context, in-flight changes, and completed milestones.
 
 Goal:
-- Task: {user_goal}
-- Outgoing state: {latest_summary}
+- Active Task: {active_goal}
+- Outgoing State: {latest_summary}
 
 Next Action:
 1. Inspect the touched files in `HANDOVER.md`.
 2. Run validation tests to confirm baseline integrity.
-3. Complete any remaining requirements and run the mandatory final review.
+3. Complete any remaining requirements for '{active_goal}' and run the mandatory final review.
 
 Proceed immediately with reviewing the current state and completing the task.
 ```
