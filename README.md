@@ -3,27 +3,155 @@
 > **Zero-loss context handovers and automated quota protection for AI coding agents.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Supported Agents](https://img.shields.io/badge/Agents-Codex%20%7C%20Gemini%20%7C%20Claude%20%7C%20Antigravity-orange.svg)](#supported-ecosystem)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-green.svg)](#installation)
+[![Supported Agents](https://img.shields.io/badge/Agents-Claude%20%7C%20Gemini%20%7C%20Codex%20%7C%20Cursor-orange.svg)](#-setup-by-agent)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-green.svg)](#-quick-install)
 
-**Handover** is a portable skill and automation framework that solves the two biggest pain points of working with autonomous AI coding agents:
+**Handover** is a portable, multi-agent skill and framework that solves the two biggest pain points in AI pair-programming:
 1. **The 5% Token & Rate-Limit Cliff**: Agents running out of tokens or hitting API rate limits (HTTP 429) mid-turn, leaving broken syntax, dirty git states, and lost context.
-2. **Cross-Model Switching Friction**: Having to manually re-explain task status, completed milestones, and immediate next steps when switching between assistants (e.g., **OpenAI Codex** $\leftrightarrow$ **Google Gemini** $\leftrightarrow$ **Anthropic Claude**).
+2. **Cross-Model Switching Friction**: Having to manually re-explain task status, completed milestones, and immediate next steps when switching between assistants (e.g., **Anthropic Claude Code** $\leftrightarrow$ **Google Gemini** $\leftrightarrow$ **OpenAI Codex** $\leftrightarrow$ **Cursor**).
 
-Whenever session limits approach exhaustion—or whenever you type `"handover"` in chat—this skill immediately captures workspace state, redacts secrets, and generates a structured, production-ready `HANDOVER.md` in your project root with a copy-pasteable continuation prompt.
+Whenever limits approach exhaustion—or whenever you trigger a handover—this framework halts active edits, captures workspace state, scrubs secrets, and writes a production-ready **`HANDOVER.md`** with an exact continuation prompt for the next assistant.
 
 ---
 
 ## ⚡ Key Features
 
-* 🛡️ **Automated `< 5%` Emergency Quota Guard**: Halts tool execution at 95% rate-limit usage, preventing unexpected `usage_limit_exceeded` / HTTP 429 cutoffs midway through editing files.
-* 📋 **Structured `HANDOVER.md`**: Persists a complete specification breakdown: **Problem Description**, **Current Behavior**, **Desired Behavior**, **Milestones**, **Uncommitted Work**, and **Ordered Next Steps**.
-* 🔄 **Zero-Loss Model Transitions**: Move smoothly between models (Codex $\leftrightarrow$ Gemini $\leftrightarrow$ Claude $\leftrightarrow$ Cursor) with a single copy-paste prompt.
-* 🔒 **Automatic Secret Redaction**: Built-in sanitization redacts Bearer tokens, JWTs, and API keys so credentials never leak into markdown or git history.
-* 🚀 **Smart Stack Auto-Detection**: Auto-detects project testing and build commands across **Node.js / TypeScript**, **Python**, **Rust**, **Go**, and **Makefiles**.
+* 🔄 **Zero-Loss Model Transitions**: Move smoothly between models (Claude $\leftrightarrow$ Gemini $\leftrightarrow$ Codex $\leftrightarrow$ Cursor) with a single copy-paste continuation prompt.
+* 📋 **Standardized 9-Section Specification**: Persists **Problem Description**, **Current Behavior**, **Desired Behavior**, **Milestones**, **Uncommitted Diffs**, and **Ordered Next Steps**.
+* 🛡️ **Automated Quota Guard (Codex CLI)**: Intercepts tool calls at 95% rate-limit usage, halting cleanly before unexpected 429 crashes occur.
+* 💬 **Native Slash Command (Claude Code)**: Includes `.claude/commands/handover.md` so Claude users can simply type `/handover`.
+* 🔒 **Automatic Secret Redaction**: Built-in sanitization redacts Bearer tokens, JWTs, and API credentials (`Bearer [REDACTED_JWT]`).
+* 🚀 **Smart Stack Auto-Detection**: Automatically detects test and build commands across **Node.js / TypeScript**, **Python**, **Rust**, **Go**, and **Makefiles**.
 * 🧹 **Clean Git Parsing**: Isolates modified and untracked files cleanly from `git status` without polluting reports with diffstat markers (`+++++`, `deletions(-)`).
 * 🗂️ **Multi-Repo Workspace Support**: Recursively inspects and reports dirty state across mono-repos and multi-repository project roots.
-* 🩹 **Post-Mortem Session Recovery**: Reconstructs complete context from local JSONL logs even after an agent process crashes or exits abruptly.
+* 🖥️ **Universal Terminal Runner**: Run `generate_handover.py` directly from your shell regardless of which assistant you use.
+
+---
+
+## 🚀 Quick Install
+
+Clone this repository into your project and run the multi-agent installer:
+
+```bash
+# Clone the repository
+git clone https://github.com/longhakly/handover.git .handover-src
+
+# Run the installer for your project (sets up Claude, Gemini, Codex, and Cursor)
+bash .handover-src/install.sh --all
+
+# Clean up source repo
+rm -rf .handover-src
+```
+
+*(Alternatively, copy only what you need using the specific agent guides below).*
+
+---
+
+## 🤖 Setup by Agent
+
+### 🟣 1. Anthropic Claude Code
+
+Claude Code supports custom slash commands and `CLAUDE.md` instructions:
+
+1. **Install Slash Command**:
+   ```bash
+   mkdir -p .claude/commands
+   curl -fsSL https://raw.githubusercontent.com/longhakly/handover/main/.claude/commands/handover.md -o .claude/commands/handover.md
+   ```
+2. **(Optional) Add to `CLAUDE.md`**:
+   Add this snippet to your project's `CLAUDE.md`:
+   ```markdown
+   ## Handover Protocol
+   When the user asks to "handover" or when context limits approach exhaustion:
+   1. Halt modifying files immediately.
+   2. Run `bash scripts/capture_handover_state.sh` to capture git state.
+   3. Generate `HANDOVER.md` in root with Problem Description, Current vs Desired Behavior, and next steps.
+   4. Conclude with a copy-pasteable continuation prompt for the next assistant.
+   ```
+3. **Usage in Chat**:
+   Simply type:
+   ```text
+   /handover
+   ```
+
+---
+
+### 🔵 2. Google Gemini & Antigravity
+
+Gemini CLI and Antigravity auto-discover skills placed in `.agents/skills/`:
+
+1. **Install Skill**:
+   ```bash
+   mkdir -p .agents/skills
+   git clone https://github.com/longhakly/handover.git .agents/skills/handover
+   ```
+2. **Usage in Chat**:
+   Simply ask Gemini:
+   ```text
+   "handover to claude"
+   # or
+   "prepare handover doc"
+   ```
+   Gemini will automatically read `SKILL.md`, capture git state, write `HANDOVER.md`, and output the continuation prompt.
+
+---
+
+### 🟢 3. OpenAI Codex CLI
+
+Codex supports skills plus automated background rate-limit protection:
+
+1. **Install Skill**:
+   ```bash
+   mkdir -p .agents/skills
+   git clone https://github.com/longhakly/handover.git .agents/skills/handover
+   ```
+2. **Enable Quota Guard Hook (`hooks.json`)**:
+   Add this to your project or global `hooks.json` to automatically stop execution at 95% quota:
+   ```json
+   {
+     "PreToolUse": [
+       {
+         "command": "python3 .agents/skills/handover/scripts/codex_quota_guard.py"
+       }
+     ]
+   }
+   ```
+3. **(Optional) Enable Crash Watcher (`~/.codex/config.toml`)**:
+   ```toml
+   notify = ["/path/to/handover/hooks/notify_handover_guard.sh", "turn-ended"]
+   ```
+4. **Post-Mortem Crash Recovery**:
+   If Codex terminated abruptly before writing the file, reconstruct state directly from session logs:
+   ```bash
+   python3 .agents/skills/handover/scripts/recover_last_codex_session.py
+   ```
+
+---
+
+### 🟡 4. Cursor / Windsurf / Copilot Workspace
+
+Add the handover instruction to `.cursorrules` or `.windsurfrules`:
+
+```markdown
+# Handover Protocol
+When asked for a "handover" or "prepare handover doc":
+1. Stop editing files immediately.
+2. Run `bash scripts/capture_handover_state.sh` (or `.agents/skills/handover/scripts/capture_handover_state.sh`).
+3. Write `HANDOVER.md` in project root with Problem Description, Current Behavior, Desired Behavior, and uncommitted git diffs.
+4. Output the continuation prompt for the next assistant.
+```
+
+---
+
+### ⚪ 5. Standalone Terminal CLI (Any Tool / No Agent)
+
+You can also generate `HANDOVER.md` directly from your terminal at any time without waiting for an LLM:
+
+```bash
+python3 scripts/generate_handover.py "Short summary of current task"
+```
+
+This immediately inspects git state, detects test runners, scrubs secrets, and outputs a complete `HANDOVER.md`.
 
 ---
 
@@ -38,7 +166,7 @@ Every handover generates a standardized, single-file context ledger:
 - Task, outgoing model, handover reason, timestamp, branch.
 
 ## 2. Problem & Behavior Specification
-- **Description**: What is being built or solved.
+- **Description**: What is being built or fixed.
 - **Current Behavior**: Existing baseline, broken behavior, or error logs.
 - **Desired Behavior**: Target outcome and acceptance criteria.
 - **Key Invariants & Scope**: Project rules and architectural boundaries.
@@ -67,100 +195,28 @@ Every handover generates a standardized, single-file context ledger:
 
 ---
 
-## 📦 Installation
-
-### Option 1: Install in a Specific Project (Recommended)
-
-Clone or copy this repository into your project's `.agents/skills/handover` directory:
-
-```bash
-# From your project root:
-mkdir -p .agents/skills
-git clone https://github.com/longhakly/handover.git .agents/skills/handover
-```
-
-### Option 2: Install Globally for All Projects
-
-Clone into your user-level skills directory:
-
-```bash
-mkdir -p ~/.agents/skills
-git clone https://github.com/longhakly/handover.git ~/.agents/skills/handover
-```
-
----
-
-## 🛠️ Automated Safeguards Setup (OpenAI Codex CLI)
-
-To enable automatic `< 5%` quota protection and turn-end recovery in the Codex CLI:
-
-### 1. Enable PreToolUse Quota Guard (`hooks.json`)
-
-Add the quota guard script to your project or global `hooks.json`:
-
-```json
-{
-  "PreToolUse": [
-    {
-      "command": "python3 .agents/skills/handover/scripts/codex_quota_guard.py"
-    }
-  ]
-}
-```
-
-*When remaining rate limits drop below 5%, the hook blocks tool calls (exit code `2`) and auto-generates `HANDOVER.md` before the process can crash.*
-
-### 2. Enable Turn-End / Crash Watcher (`~/.codex/config.toml`)
-
-Configure the turn-end notifier in `~/.codex/config.toml`:
-
-```toml
-notify = ["/path/to/handover/hooks/notify_handover_guard.sh", "turn-ended"]
-```
-
----
-
-## 💬 How to Use
-
-### Manual Trigger in Chat
-Simply ask your agent to hand over at any time:
-```text
-"handover"
-"hand over to gemini"
-"prepare handover doc"
-```
-
-The agent will stop modifying files, run `scripts/capture_handover_state.sh`, generate `HANDOVER.md`, and provide you with the continuation prompt.
-
-### Resuming in Another Model
-1. Open your target assistant (**Google Gemini**, **Claude Code**, or **Codex**).
-2. Copy the continuation prompt from Section 9 of `HANDOVER.md` (or the agent's final chat output).
-3. Paste it into the new assistant. The new model reads `HANDOVER.md` and immediately picks up where the previous one stopped.
-
-### Post-Mortem Crash Recovery
-If Codex abruptly exited due to a power outage, network loss, or rate limit cutoff before writing `HANDOVER.md`:
-
-```bash
-python3 .agents/skills/handover/scripts/recover_last_codex_session.py
-```
-
-This reads `~/.codex/sessions/`, reconstructs the last turn's state, and outputs a complete `HANDOVER.md`.
-
----
-
 ## 📂 Repository Structure
 
 ```text
 handover/
-├── SKILL.md                          # Main skill instructions and protocol definition
-├── README.md                         # Documentation & integration guide
+├── SKILL.md                          # Universal skill specification
+├── README.md                         # Documentation & multi-agent guide
 ├── LICENSE                           # MIT License
+├── install.sh                        # Multi-agent installer script
+├── .claude/
+│   └── commands/
+│       └── handover.md               # Native Claude Code slash command (/handover)
+├── rules/
+│   ├── CLAUDE.md                     # Snippet for project CLAUDE.md
+│   ├── cursorrules.example           # Snippet for .cursorrules / .windsurfrules
+│   └── AGENTS.md                     # Snippet for project AGENTS.md
 ├── templates/
 │   └── HANDOVER_TEMPLATE.md          # Standardized 9-section handover template
 ├── scripts/
 │   ├── capture_handover_state.sh     # Fast token-free git & workspace status capture
+│   ├── generate_handover.py          # Universal standalone HANDOVER.md generator
 │   ├── codex_quota_guard.py          # PreToolUse hook monitoring rate limits (< 5%)
-│   └── recover_last_codex_session.py # Transcript parser & HANDOVER.md generator
+│   └── recover_last_codex_session.py # Codex JSONL transcript parser & crash recovery
 └── hooks/
     ├── notify_handover_guard.sh      # Codex turn-end notification hook
     └── hooks.json.example            # Sample PreToolUse hook configuration
@@ -170,10 +226,11 @@ handover/
 
 ## 🤝 Supported Ecosystem
 
-* **OpenAI Codex CLI**
-* **Google Gemini CLI / Antigravity**
-* **Anthropic Claude Code**
-* **Cursor / Windsurf / Copilot Workspace**
+* **Anthropic Claude Code** (`/handover` command & `CLAUDE.md`)
+* **Google Gemini CLI & Antigravity** (Native `.agents/skills/`)
+* **OpenAI Codex CLI** (PreToolUse hook & crash recovery)
+* **Cursor, Windsurf & GitHub Copilot** (`.cursorrules` & project instructions)
+* **Universal Terminal CLI** (Standalone Python runner)
 
 ---
 

@@ -1,0 +1,16 @@
+# Handover Rule for Cursor / Windsurf
+
+Add this snippet to your `.cursorrules` or `.windsurfrules`:
+
+```markdown
+# Handover Protocol
+When asked for a "handover" or "prepare handover doc":
+1. Stop editing files immediately.
+2. Run `bash scripts/capture_handover_state.sh` (or `bash .agents/skills/handover/scripts/capture_handover_state.sh`).
+3. Write `HANDOVER.md` in the project root detailing:
+   - Description, Current Behavior, Desired Behavior
+   - Completed milestones & uncommitted git diffs
+   - Ordered next actions & test commands
+   - Continuation prompt for the next assistant
+4. Output the continuation prompt in markdown format.
+```

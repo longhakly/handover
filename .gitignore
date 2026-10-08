@@ -5,4 +5,4 @@ __pycache__/
 *.swp
 *~
 .venv/
-HANDOVER.md
+/HANDOVER.md
