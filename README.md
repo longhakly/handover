@@ -180,4 +180,4 @@ handover/
 ## 📜 License
 
 Released under the [MIT License](LICENSE).
-Created by [Longhak Ly](https://github.com/longhakly).
+Created by [Long Hakly](https://github.com/longhakly).
