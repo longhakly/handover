@@ -1,4 +1,4 @@
-# Agent Handover (`HANDOVER.md`)
+# Handover (`HANDOVER.md`)
 
 > **Zero-loss context handovers and automated quota protection for AI coding agents.**
 
@@ -6,7 +6,7 @@
 [![Supported Agents](https://img.shields.io/badge/Agents-Codex%20%7C%20Gemini%20%7C%20Claude%20%7C%20Antigravity-orange.svg)](#supported-ecosystem)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-green.svg)](#installation)
 
-**Agent Handover** is a portable skill and automation framework that solves the two biggest pain points of working with autonomous AI coding agents:
+**Handover** is a portable skill and automation framework that solves the two biggest pain points of working with autonomous AI coding agents:
 1. **The 5% Token & Rate-Limit Cliff**: Agents running out of tokens or hitting API rate limits (HTTP 429) mid-turn, leaving broken syntax, dirty git states, and lost context.
 2. **Cross-Model Switching Friction**: Having to manually re-explain task status, completed milestones, and immediate next steps when switching between assistants (e.g., **OpenAI Codex** $\leftrightarrow$ **Google Gemini** $\leftrightarrow$ **Anthropic Claude**).
 
@@ -76,7 +76,7 @@ Clone or copy this repository into your project's `.agents/skills/handover` dire
 ```bash
 # From your project root:
 mkdir -p .agents/skills
-git clone https://github.com/longhakly/handover-skill.git .agents/skills/handover
+git clone https://github.com/longhakly/handover.git .agents/skills/handover
 ```
 
 ### Option 2: Install Globally for All Projects
@@ -85,7 +85,7 @@ Clone into your user-level skills directory:
 
 ```bash
 mkdir -p ~/.agents/skills
-git clone https://github.com/longhakly/handover-skill.git ~/.agents/skills/handover
+git clone https://github.com/longhakly/handover.git ~/.agents/skills/handover
 ```
 
 ---
@@ -115,7 +115,7 @@ Add the quota guard script to your project or global `hooks.json`:
 Configure the turn-end notifier in `~/.codex/config.toml`:
 
 ```toml
-notify = ["/path/to/handover-skill/hooks/notify_handover_guard.sh", "turn-ended"]
+notify = ["/path/to/handover/hooks/notify_handover_guard.sh", "turn-ended"]
 ```
 
 ---
@@ -126,7 +126,7 @@ notify = ["/path/to/handover-skill/hooks/notify_handover_guard.sh", "turn-ended"
 Simply ask your agent to hand over at any time:
 ```text
 "handover"
-"hand off to gemini"
+"hand over to gemini"
 "prepare handover doc"
 ```
 
@@ -151,7 +151,7 @@ This reads `~/.codex/sessions/`, reconstructs the last turn's state, and outputs
 ## 📂 Repository Structure
 
 ```text
-handover-skill/
+handover/
 ├── SKILL.md                          # Main skill instructions and protocol definition
 ├── README.md                         # Documentation & integration guide
 ├── LICENSE                           # MIT License

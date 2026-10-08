@@ -18,7 +18,7 @@ Use this skill to execute a clean, seamless handover from one AI model (e.g., Op
    - When API rate limits, hourly message limits, or token quotas drop below 5% remaining.
    - When the system injects a warning about approaching context exhaustion or truncation.
 2. **Explicit User Request**:
-   - The user asks for a handover or handoff (e.g., `"handover"`, `"handoff"`, `"hand off to gemini"`, `"hand over to codex"`, `"prepare handover doc"`, `"prepare handoff doc"`).
+   - The user asks for a handover (e.g., `"handover"`, `"hand over to gemini"`, `"hand over to codex"`, `"prepare handover doc"`).
    - The user wants to pause a session and resume in a different tool or model.
 
 ---
