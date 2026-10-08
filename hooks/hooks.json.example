@@ -1,0 +1,7 @@
+{
+  "PreToolUse": [
+    {
+      "command": "python3 /path/to/handover-skill/scripts/codex_quota_guard.py"
+    }
+  ]
+}
