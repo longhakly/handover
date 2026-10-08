@@ -105,18 +105,33 @@ Codex supports skills plus automated background rate-limit protection:
    mkdir -p .agents/skills
    git clone https://github.com/longhakly/handover.git .agents/skills/handover
    ```
-2. **Enable Quota Guard Hook (`hooks.json`)**:
-   Add this to your project or global `hooks.json` to automatically stop execution at 95% quota:
+2. **Enable Codex Hooks (`hooks.json`)**:
+   Add this to your project or global `hooks.json` to automatically enforce quota guards (< 5% threshold) and safe session-end state capture:
    ```json
    {
-     "PreToolUse": [
-       {
-         "command": "python3 .agents/skills/handover/scripts/codex_quota_guard.py"
-       }
-     ]
+     "hooks": {
+       "PreToolUse": [
+         {
+           "matcher": ".*",
+           "handler": {
+             "type": "command",
+             "command": "python3 .agents/skills/handover/scripts/codex_quota_guard.py"
+           }
+         }
+       ],
+       "SessionEnd": [
+         {
+           "matcher": ".*",
+           "handler": {
+             "type": "command",
+             "command": "python3 .agents/skills/handover/scripts/recover_last_codex_session.py"
+           }
+         }
+       ]
+     }
    }
    ```
-3. **(Optional) Enable Crash Watcher (`~/.codex/config.toml`)**:
+3. **(Optional) Enable Turn-End Notification (`~/.codex/config.toml`)**:
    ```toml
    notify = ["/path/to/handover/hooks/notify_handover_guard.sh", "turn-ended"]
    ```

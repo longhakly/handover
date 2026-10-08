@@ -14,17 +14,54 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
 
-def find_latest_codex_session():
+def session_matches_cwd(session_path: str, target_cwd: str) -> bool:
+    """Verifies that a session log belongs to the specified workspace directory."""
+    target_cwd = os.path.realpath(target_cwd)
+    try:
+        with open(session_path, "r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i > 50:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except Exception:
+                    continue
+                if data.get("cwd") and os.path.realpath(data["cwd"]) == target_cwd:
+                    return True
+                payload = data.get("payload")
+                if isinstance(payload, dict):
+                    if payload.get("cwd") and os.path.realpath(payload["cwd"]) == target_cwd:
+                        return True
+                    roots = payload.get("workspace_roots", [])
+                    if isinstance(roots, list):
+                        for r in roots:
+                            if os.path.realpath(r) == target_cwd:
+                                return True
+    except Exception:
+        pass
+    return False
+
+def find_latest_codex_session(target_cwd: str = None) -> str:
+    """Finds the latest Codex session log, filtering by workspace cwd to prevent cross-project leaks."""
     sessions_pattern = os.path.expanduser("~/.codex/sessions/**/*.jsonl")
     files = glob.glob(sessions_pattern, recursive=True)
     if not files:
         return None
-    files.sort(key=os.path.getmtime)
-    return files[-1]
+    files.sort(key=os.path.getmtime, reverse=True)
+    if target_cwd:
+        for f in files:
+            if session_matches_cwd(f, target_cwd):
+                return f
+        return None
+    return files[0]
 
 def extract_session_details(session_path):
     user_requests = []
@@ -138,13 +175,30 @@ def capture_git_state(workspace_root):
     return "\n\n".join(reports) if reports else "No git changes detected."
 
 def sanitize_secrets(text: str) -> str:
+    """Masks API keys, tokens, credentials, and private keys thoroughly."""
     if not text:
         return text
+
+    # Mask Private keys
+    text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED_PRIVATE_KEY]", text)
+
     # Mask Bearer tokens / JWTs
     text = re.sub(r"Bearer\s+eyJ[A-Za-z0-9_\-\.]+", "Bearer [REDACTED_JWT]", text)
     text = re.sub(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+", "[REDACTED_JWT]", text)
-    # Mask common secrets
-    text = re.sub(r"(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{12,}['\"]", "[REDACTED_SECRET]", text, flags=re.IGNORECASE)
+
+    # Well-known API key patterns
+    text = re.sub(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b", "[REDACTED_API_KEY]", text)
+    text = re.sub(r"\bAIza[0-9A-Za-z-_]{35,}\b", "[REDACTED_API_KEY]", text)
+    text = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED_API_KEY]", text)
+    text = re.sub(r"\b(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b", "[REDACTED_AWS_KEY]", text)
+
+    # Key / Secret / Token assignments (quoted or unquoted, e.g. OPENAI_API_KEY=..., token: "...")
+    text = re.sub(
+        r"(?i)\b([a-z0-9_]*(?:key|secret|token|password|auth|passwd)[a-z0-9_]*)\s*([:=])\s*([\'\"])?([^\s;\'\"]{8,})\3?",
+        r"\1\2\3[REDACTED_SECRET]\3",
+        text
+    )
+
     return text
 
 def parse_user_goal(user_requests):
@@ -207,9 +261,9 @@ def parse_problem_specification(user_requests, last_error=None):
                     break
 
     return {
-        "description": description,
-        "current_behavior": current_behavior,
-        "desired_behavior": desired_behavior,
+        "description": sanitize_secrets(description),
+        "current_behavior": sanitize_secrets(current_behavior),
+        "desired_behavior": sanitize_secrets(desired_behavior),
     }
 
 def determine_handover_reason(last_error, rate_limits):
@@ -275,25 +329,25 @@ def generate_handover_content(workspace_root, details):
     val_commands = detect_validation_commands(workspace_root)
     guideline_rules = detect_guidelines(workspace_root)
 
-    # Analyze agent messages to determine stage and completed work
+    # Analyze agent messages to determine stage and completed work (with secret scrubbing)
     agent_msgs = details["agent_messages"]
     completed_bullets = []
     latest_summary = "Task was interrupted during execution."
 
     if agent_msgs:
-        latest_summary = agent_msgs[-1].strip()
+        latest_summary = sanitize_secrets(agent_msgs[-1].strip())
         for msg in agent_msgs:
             if "Phase A" in msg or "plan" in msg.lower():
                 completed_bullets.append("Completed task analysis and plan formulation.")
             elif "verification passed" in msg.lower() or "verified" in msg.lower():
                 first_line = msg.split("\n")[0]
-                completed_bullets.append(first_line[:150])
+                completed_bullets.append(sanitize_secrets(first_line[:150]))
             elif "implemented" in msg.lower():
                 first_line = msg.split("\n")[0]
-                completed_bullets.append(first_line[:150])
+                completed_bullets.append(sanitize_secrets(first_line[:150]))
 
     if not completed_bullets and agent_msgs:
-        completed_bullets = [agent_msgs[0][:150]]
+        completed_bullets = [sanitize_secrets(agent_msgs[0][:150])]
 
     # Extract touched files cleanly from status blocks, ignoring diffstat blocks
     modified_files = []
@@ -330,23 +384,24 @@ def generate_handover_content(workspace_root, details):
                     if file_rel not in modified_files:
                         modified_files.append(file_rel)
 
-    files_section = ""
+    completed_str = "\n".join([f"- {b}" for b in completed_bullets]) if completed_bullets else "- Initial review of requirements."
+    modified_str = "\n".join([f"- `{f}`" for f in modified_files]) if modified_files else "- None detected."
+
+    # Immediate next steps
+    next_steps = []
     if modified_files:
-        files_section = "\n".join(f"- `{f}`: Modified / staged status" for f in modified_files)
-    else:
-        files_section = "- No tracked files in dirty status"
+        next_steps.append(f"Review uncommitted changes in: {', '.join([f'`{f}`' for f in modified_files[:3]])}.")
+    next_steps.append("Run project test suite and verification commands.")
+    next_steps.append("Complete any remaining requirements and run the mandatory final review.")
+    next_steps_str = "\n".join([f"{i+1}. {step}" for i, step in enumerate(next_steps)])
 
     handover_md = f"""# Session Handover Document
 
-> **Handover Notice**: Generated automatically when session limit dropped below 5% or process hit usage exhaustion.
-
----
-
 ## 1. Executive Context
 
-- **Original Task**: {user_goal}
-- **Outgoing Model**: {model_name}
-- **Handover Reason**: {handover_reason}
+- **Task**: {user_goal}
+- **Outgoing Model / Environment**: {model_name}
+- **Handover Trigger / Reason**: {handover_reason}
 - **Timestamp**: {now_str}
 - **Workspace Root**: `{workspace_root}`
 
@@ -354,26 +409,33 @@ def generate_handover_content(workspace_root, details):
 
 ## 2. Problem & Behavior Specification
 
-- **Description**: {problem_spec['description']}
-- **Current Behavior**: {problem_spec['current_behavior']}
-- **Desired Behavior**: {problem_spec['desired_behavior']}
-- **Key Invariants & Scope**: {guideline_rules}
+- **Description**:
+  {problem_spec["description"]}
+- **Current Behavior**:
+  {problem_spec["current_behavior"]}
+- **Desired Behavior**:
+  {problem_spec["desired_behavior"]}
+- **Key Invariants & Scope**:
+  - Keep changes cohesive, scoped, and minimal.
+  - Adhere to existing coding style and architecture boundaries.
 
 ---
 
 ## 3. Current Execution Status
 
-- **Status**: Interrupted by session or quota limits
-- **Progress Summary**: {latest_summary}
+- **Status**: Interrupted / Handover in progress
+- **Latest Summary from Outgoing Model**:
+  > {latest_summary}
 
 ---
 
 ## 4. What Was Completed
 
-{chr(10).join(f"- [x] {b}" for b in completed_bullets) if completed_bullets else "- [x] Initial diagnosis and partial execution completed."}
+### Finished Milestones
+{completed_str}
 
-### Files Touched / Modified
-{files_section}
+### Touched & Modified Files
+{modified_str}
 
 ---
 
@@ -385,15 +447,12 @@ def generate_handover_content(workspace_root, details):
 
 ## 6. Ordered Next Steps (Immediate Action Required)
 
-1. **Step 1 (Immediate)**: Verify recent modifications:
-   - Check staged/unstaged changes across repositories above.
-   - Run relevant validation commands:
-     ```bash
-     {val_commands}
-     ```
-2. **Step 2**: Complete the remaining requirements of the user request:
-   - `{user_goal}`
-3. **Step 3**: Perform final code quality and self-review before committing.
+{next_steps_str}
+
+**Validation Commands**:
+```bash
+{val_commands}
+```
 
 ---
 
@@ -433,14 +492,30 @@ Next Action:
 Proceed immediately with reviewing the current state and completing the task.
 ```
 """
-    return handover_md
+    return sanitize_secrets(handover_md)
 
 def main():
     workspace_root = os.getcwd()
-    session_file = sys.argv[1] if len(sys.argv) > 1 else find_latest_codex_session()
+    session_file = None
+
+    if len(sys.argv) > 1:
+        session_file = sys.argv[1]
+    elif not sys.stdin.isatty():
+        try:
+            stdin_data = sys.stdin.read().strip()
+            if stdin_data:
+                hook_input = json.loads(stdin_data)
+                session_file = hook_input.get("transcript_path") or hook_input.get("session_path")
+                if "cwd" in hook_input:
+                    workspace_root = hook_input["cwd"]
+        except Exception:
+            pass
+
+    if not session_file:
+        session_file = find_latest_codex_session(workspace_root)
 
     if not session_file or not os.path.exists(session_file):
-        print(f"Error: No valid Codex session log found at {session_file}.")
+        print(f"Error: No valid Codex session log found for workspace: {workspace_root}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Extracting session from: {session_file}")
@@ -452,6 +527,14 @@ def main():
     handover_text = generate_handover_content(workspace_root, details)
 
     target_handover_path = os.path.join(workspace_root, "HANDOVER.md")
+    if os.path.exists(target_handover_path):
+        backup_path = f"{target_handover_path}.bak"
+        try:
+            shutil.copy2(target_handover_path, backup_path)
+            print(f"Backed up existing {target_handover_path} to {backup_path}")
+        except Exception as e:
+            print(f"Warning: Failed to create backup: {e}", file=sys.stderr)
+
     with open(target_handover_path, "w", encoding="utf-8") as f:
         f.write(handover_text)
 

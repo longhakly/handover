@@ -18,15 +18,51 @@ import sys
 
 THRESHOLD_PERCENT = 95.0
 
-def find_latest_session():
+def session_matches_cwd(session_path: str, target_cwd: str) -> bool:
+    """Verifies that a session log belongs to the specified workspace directory."""
+    target_cwd = os.path.realpath(target_cwd)
+    try:
+        with open(session_path, "r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i > 50:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except Exception:
+                    continue
+                if data.get("cwd") and os.path.realpath(data["cwd"]) == target_cwd:
+                    return True
+                payload = data.get("payload")
+                if isinstance(payload, dict):
+                    if payload.get("cwd") and os.path.realpath(payload["cwd"]) == target_cwd:
+                        return True
+                    roots = payload.get("workspace_roots", [])
+                    if isinstance(roots, list):
+                        for r in roots:
+                            if os.path.realpath(r) == target_cwd:
+                                return True
+    except Exception:
+        pass
+    return False
+
+def find_latest_session(target_cwd: str = None) -> str:
+    """Finds the newest session log, filtering by workspace cwd to prevent cross-project leaks."""
     sessions_pattern = os.path.expanduser("~/.codex/sessions/**/*.jsonl")
     files = glob.glob(sessions_pattern, recursive=True)
     if not files:
         return None
-    files.sort(key=os.path.getmtime)
-    return files[-1]
+    files.sort(key=os.path.getmtime, reverse=True)
+    if target_cwd:
+        for f in files:
+            if session_matches_cwd(f, target_cwd):
+                return f
+        return None
+    return files[0]
 
-def get_latest_rate_limits(session_path):
+def get_latest_rate_limits(session_path: str):
     if not session_path or not os.path.exists(session_path):
         return None
 
@@ -57,7 +93,7 @@ def get_latest_rate_limits(session_path):
         pass
     return None
 
-def find_recovery_script(cwd):
+def find_recovery_script(cwd: str) -> str:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(script_dir, "recover_last_codex_session.py"),
@@ -71,35 +107,43 @@ def find_recovery_script(cwd):
     return None
 
 def main():
-    stdin_data = ""
     transcript_path = None
     cwd = os.getcwd()
 
     if not sys.stdin.isatty():
         try:
-            stdin_data = sys.stdin.read()
-            if stdin_data.strip():
+            stdin_data = sys.stdin.read().strip()
+            if stdin_data:
                 hook_input = json.loads(stdin_data)
-                transcript_path = hook_input.get("transcript_path")
+                transcript_path = hook_input.get("transcript_path") or hook_input.get("session_path")
                 cwd = hook_input.get("cwd", cwd)
         except Exception:
             pass
 
     if not transcript_path or not os.path.exists(transcript_path):
-        transcript_path = find_latest_session()
+        transcript_path = find_latest_session(cwd)
+
+    if not transcript_path or not os.path.exists(transcript_path):
+        sys.exit(0)
 
     rate_limits = get_latest_rate_limits(transcript_path)
     if not rate_limits:
         sys.exit(0)
 
     primary = rate_limits.get("primary") or {}
-    used_percent = primary.get("used_percent")
+    raw_used = primary.get("used_percent")
+    used_percent = None
+    if raw_used is not None:
+        try:
+            used_percent = float(raw_used)
+        except (ValueError, TypeError):
+            pass
 
     if used_percent is not None and used_percent >= THRESHOLD_PERCENT:
         # < 5% threshold reached! Trigger Emergency Handover!
         recovery_script = find_recovery_script(cwd)
         if recovery_script:
-            subprocess.run([sys.executable, recovery_script, transcript_path], cwd=cwd)
+            subprocess.run([sys.executable, recovery_script, transcript_path], cwd=cwd, timeout=10)
 
         sys.stderr.write(
             f"\n[EMERGENCY HANDOVER TRIGGERED - REMAINING LIMIT < 5%]\n"

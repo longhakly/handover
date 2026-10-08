@@ -1,7 +1,22 @@
 {
-  "PreToolUse": [
-    {
-      "command": "python3 /path/to/handover/scripts/codex_quota_guard.py"
-    }
-  ]
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "handler": {
+          "type": "command",
+          "command": "python3 /path/to/handover/scripts/codex_quota_guard.py"
+        }
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": ".*",
+        "handler": {
+          "type": "command",
+          "command": "python3 /path/to/handover/scripts/recover_last_codex_session.py"
+        }
+      }
+    ]
+  }
 }

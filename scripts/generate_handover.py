@@ -54,12 +54,33 @@ def capture_git_state(workspace_root):
                     continue
     return "\n\n".join(reports) if reports else "No git changes detected."
 
+import shutil
+
 def sanitize_secrets(text: str) -> str:
+    """Masks API keys, tokens, credentials, and private keys thoroughly."""
     if not text:
         return text
+
+    # Mask Private keys
+    text = re.sub(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----", "[REDACTED_PRIVATE_KEY]", text)
+
+    # Mask Bearer tokens / JWTs
     text = re.sub(r"Bearer\s+eyJ[A-Za-z0-9_\-\.]+", "Bearer [REDACTED_JWT]", text)
     text = re.sub(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+", "[REDACTED_JWT]", text)
-    text = re.sub(r"(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"][A-Za-z0-9_\-\.]{12,}['\"]", "[REDACTED_SECRET]", text, flags=re.IGNORECASE)
+
+    # Well-known API key patterns
+    text = re.sub(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}\b", "[REDACTED_API_KEY]", text)
+    text = re.sub(r"\bAIza[0-9A-Za-z-_]{35,}\b", "[REDACTED_API_KEY]", text)
+    text = re.sub(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", "[REDACTED_API_KEY]", text)
+    text = re.sub(r"\b(?:AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b", "[REDACTED_AWS_KEY]", text)
+
+    # Key / Secret / Token assignments (quoted or unquoted, e.g. OPENAI_API_KEY=..., token: "...")
+    text = re.sub(
+        r"(?i)\b([a-z0-9_]*(?:key|secret|token|password|auth|passwd)[a-z0-9_]*)\s*([:=])\s*([\'\"])?([^\s;\'\"]{8,})\3?",
+        r"\1\2\3[REDACTED_SECRET]\3",
+        text
+    )
+
     return text
 
 def detect_validation_commands(workspace_root):
@@ -234,8 +255,16 @@ Proceed immediately with reviewing the current state and completing the task.
 ```
 """
     target = os.path.join(workspace_root, "HANDOVER.md")
+    if os.path.exists(target):
+        backup_path = f"{target}.bak"
+        try:
+            shutil.copy2(target, backup_path)
+            print(f"Backed up existing {target} to {backup_path}")
+        except Exception as e:
+            print(f"Warning: Failed to create backup: {e}", file=sys.stderr)
+
     with open(target, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write(sanitize_secrets(content))
     return target
 
 def main():
