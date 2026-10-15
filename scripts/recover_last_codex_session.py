@@ -6,7 +6,7 @@ Reconstructs and generates a comprehensive, production-ready HANDOVER.md from lo
 OpenAI Codex session logs (~/.codex/sessions/**/*.jsonl) and active git state.
 
 Works both:
-1. Automatically when triggered by quota guard hooks upon reaching < 5% limits.
+1. Automatically when triggered by quota guard hooks upon reaching < 2% limits (usage >= 98%).
 2. Post-mortem after Codex process crashes, rate limits (HTTP 429), or abrupt exits.
 """
 
@@ -72,59 +72,96 @@ def extract_session_details(session_path):
     model_name = "Codex"
     created_at = None
 
-    with open(session_path, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except Exception:
-                continue
+    if not session_path or not os.path.exists(session_path):
+        return {
+            "path": session_path,
+            "created_at": None,
+            "model_name": model_name,
+            "user_requests": [],
+            "agent_messages": [],
+            "tool_actions": [],
+            "last_error": None,
+            "last_rate_limits": None,
+        }
 
-            t = data.get("type")
-            payload = data.get("payload", {})
-            ts = data.get("timestamp")
-            if ts and not created_at:
-                created_at = ts
+    file_size = os.path.getsize(session_path)
 
-            # Model metadata
-            if "model" in data:
-                model_name = data["model"]
-            if isinstance(payload, dict) and "model" in payload:
-                model_name = payload["model"]
+    # For large transcripts (> 2MB), inspect head and tail chunks instead of full line-by-line scan
+    if file_size > 2 * 1024 * 1024:
+        lines = []
+        with open(session_path, "rb") as f:
+            # 1. Read head chunk (first 256KB) for metadata and initial user prompt
+            head_bytes = f.read(262144)
+            lines.extend(head_bytes.decode("utf-8", errors="replace").splitlines())
 
-            # Event messages
-            if t == "event_msg":
-                msg_type = payload.get("type")
-                if msg_type == "task_complete" and payload.get("error"):
-                    last_error = payload.get("error")
-                elif msg_type == "token_count" and payload.get("rate_limits"):
-                    last_rate_limits = payload.get("rate_limits")
-                elif msg_type == "agent_message":
-                    msg = payload.get("message")
-                    if msg:
-                        agent_messages.append(msg)
+            # 2. Read tail chunk (last 2MB) for recent context, agent summaries, tool actions, error, and rate limits
+            tail_offset = max(0, file_size - 2 * 1024 * 1024)
+            f.seek(tail_offset)
+            tail_bytes = f.read()
+            tail_lines = tail_bytes.decode("utf-8", errors="replace").splitlines()
+            # Drop the first line of tail chunk in case seek split mid-line
+            if tail_lines:
+                tail_lines = tail_lines[1:]
+            lines.extend(tail_lines)
+    else:
+        with open(session_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
 
-            # User prompts
-            elif t == "response_item" and payload.get("role") == "user":
-                for item in payload.get("content", []):
-                    if item.get("type") == "input_text":
-                        txt = item.get("text", "")
-                        # Filter out system boilerplate
-                        if (
-                            txt
-                            and not txt.startswith("# AGENTS.md")
-                            and not txt.startswith("<environment_context")
-                            and not txt.startswith("<external_codex")
-                        ):
+    seen_requests = set()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+        except Exception:
+            continue
+
+        t = data.get("type")
+        payload = data.get("payload", {})
+        ts = data.get("timestamp")
+        if ts and not created_at:
+            created_at = ts
+
+        # Model metadata
+        if "model" in data:
+            model_name = data["model"]
+        if isinstance(payload, dict) and "model" in payload:
+            model_name = payload["model"]
+
+        # Event messages
+        if t == "event_msg":
+            msg_type = payload.get("type")
+            if msg_type == "task_complete" and payload.get("error"):
+                last_error = payload.get("error")
+            elif msg_type == "token_count" and payload.get("rate_limits"):
+                last_rate_limits = payload.get("rate_limits")
+            elif msg_type == "agent_message":
+                msg = payload.get("message")
+                if msg:
+                    agent_messages.append(msg)
+
+        # User prompts
+        elif t == "response_item" and payload.get("role") == "user":
+            for item in payload.get("content", []):
+                if item.get("type") == "input_text":
+                    txt = item.get("text", "")
+                    # Filter out system boilerplate
+                    if (
+                        txt
+                        and not txt.startswith("# AGENTS.md")
+                        and not txt.startswith("<environment_context")
+                        and not txt.startswith("<external_codex")
+                    ):
+                        if txt not in seen_requests:
+                            seen_requests.add(txt)
                             user_requests.append(txt)
 
-            # Tool calls
-            elif t == "response_item" and payload.get("type") == "custom_tool_call":
-                name = payload.get("name", "")
-                inp = payload.get("input", "")
-                tool_actions.append({"name": name, "input": inp})
+        # Tool calls
+        elif t == "response_item" and payload.get("type") == "custom_tool_call":
+            name = payload.get("name", "")
+            inp = payload.get("input", "")
+            tool_actions.append({"name": name, "input": inp})
 
     return {
         "path": session_path,
@@ -322,8 +359,12 @@ def determine_handover_reason(last_error, rate_limits):
     if rate_limits:
         primary = rate_limits.get("primary") or {}
         used = primary.get("used_percent")
-        if used is not None and used >= 95.0:
-            return f"Remaining quota dropped below 5% threshold (Rate limit usage: {used}%)"
+        if used is not None and used >= 98.0:
+            return f"Remaining quota dropped below 2% threshold (Rate limit usage: {used}%)"
+        secondary = rate_limits.get("secondary") or {}
+        sec_used = secondary.get("used_percent")
+        if sec_used is not None and sec_used >= 98.0:
+            return f"Remaining quota dropped below 2% threshold (Secondary rate limit usage: {sec_used}%)"
 
     return "Session transition / limits approaching threshold"
 

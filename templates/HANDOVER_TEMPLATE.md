@@ -1,14 +1,14 @@
 # Session Handover Document
 
-> **Handover Notice**: Generated automatically when session limit dropped below 5% or model transition was requested.
+> **Handover Notice**: Generated automatically when session limit dropped below 2% or model transition was requested.
 
 ---
 
 ## 1. Executive Context
 
 - **Original Task**: {Short description of the user request}
-- **Outgoing Model**: {e.g. Gemini 3.8 Flash / OpenAI Codex / Claude 3.7 Sonnet}
-- **Handover Reason**: {e.g. Context headroom < 5% / Quota limit reached / User requested switch}
+- **Outgoing Model**: {e.g. Gemini 3.8 Flash / OpenAI Codex}
+- **Handover Reason**: {e.g. Context headroom < 2% / Quota limit reached (>= 98%) / User requested switch}
 - **Timestamp**: {ISO timestamp or current date & time}
 - **Branch / Worktree**: {Git branch name or workspace directory}
 
@@ -64,7 +64,7 @@
 
 - **Architecture Rules Applied**: {e.g. Service layer boundaries, typed schemas, repository patterns}
 - **Discovered Quirks / Edge Cases**: {Any bugs found or important implementation nuances}
-- **Strict Constraints**: {Project guidelines (e.g. AGENTS.md, CLAUDE.md, etc.) that must be preserved}
+- **Strict Constraints**: {Rules from AGENTS.md, ENGINEERING_MEMORY.md that must be preserved}
 
 ---
 
@@ -85,7 +85,7 @@ Please read `HANDOVER.md` in the project root to understand full context, curren
 Current immediate objective:
 - Pick up at Step {N}: {Brief description of next task}
 - Target file(s): `{filepath}`
-- Ensure all repository guidelines and invariants are respected.
+- Ensure all rules in `AGENTS.md` and `ENGINEERING_MEMORY.md` are respected.
 
 Proceed directly with executing Step {N}.
 ```

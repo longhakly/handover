@@ -85,8 +85,8 @@ try:
         except ValueError:
             pass
 
-    # Trigger if hard error occurred or rate limit usage exceeded 95%
-    if limit_exceeded or (used_pct is not None and used_pct >= 95.0):
+    # Trigger if hard error occurred or rate limit usage exceeded 98%
+    if limit_exceeded or (used_pct is not None and used_pct >= 98.0):
         candidates = [
             os.path.join(target_cwd, ".agents/skills/handover/scripts/recover_last_codex_session.py"),
             os.path.join(target_cwd, "scripts/recover_last_codex_session.py"),

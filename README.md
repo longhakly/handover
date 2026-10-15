@@ -18,7 +18,7 @@ Whenever limits approach exhaustion—or whenever you trigger a handover—this 
 
 * 🔄 **Zero-Loss Model Transitions**: Move smoothly between models (Claude $\leftrightarrow$ Gemini $\leftrightarrow$ Codex $\leftrightarrow$ Cursor) with a single copy-paste continuation prompt.
 * 📋 **Standardized 9-Section Specification**: Persists **Problem Description**, **Current Behavior**, **Desired Behavior**, **Milestones**, **Uncommitted Diffs**, and **Ordered Next Steps**.
-* 🛡️ **Automated Quota Guard (Codex CLI)**: Intercepts tool calls at 95% rate-limit usage, halting cleanly before unexpected 429 crashes occur.
+* 🛡️ **Automated Quota Guard (Codex CLI)**: Intercepts tool calls at 98% rate-limit usage (< 2% remaining quota), halting cleanly before unexpected 429 crashes occur, with narrow read-only diagnostic allowance (`get_usage_limits`) to refresh live account quota.
 * 💬 **Native Slash Command (Claude Code)**: Includes `.claude/commands/handover.md` so Claude users can simply type `/handover`.
 * 🔒 **Automatic Secret Redaction**: Built-in sanitization redacts Bearer tokens, JWTs, and API credentials (`Bearer [REDACTED_JWT]`).
 * 🚀 **Smart Stack Auto-Detection**: Automatically detects test and build commands across **Node.js / TypeScript**, **Python**, **Rust**, **Go**, and **Makefiles**.
@@ -106,7 +106,7 @@ Codex supports skills plus automated background rate-limit protection:
    git clone https://github.com/longhakly/handover.git .agents/skills/handover
    ```
 2. **Enable Codex Hooks (`hooks.json`)**:
-   Add this to your project or global `hooks.json` to automatically enforce quota guards (< 5% threshold) and safe session-end state capture:
+   Add this to your project or global `hooks.json` to automatically enforce quota guards (< 2% threshold, usage >= 98%) and safe session-end state capture:
    ```json
    {
      "hooks": {
