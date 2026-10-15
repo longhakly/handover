@@ -40,6 +40,12 @@ ALLOWED_EXEC_CONTROL_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Harmless read-only status probes allowed in exec_command during halt (e.g. pwd, true, date)
+ALLOWED_EXEC_PROBE_REGEX = re.compile(
+    r"^(?:(?:const|let|var)\s+\w+\s*=\s*)?(?:return\s+)?(?:await\s+)?(?:tools\.)?exec_command\s*\(\s*\{\s*[\"']?cmd[\"']?\s*:\s*[\"'](?:pwd|true|date|whoami|echo\s+[^\r\n\"']*)[\"'].*\}\s*\)\s*;?$",
+    re.IGNORECASE | re.DOTALL
+)
+
 def is_diagnostic_control_call(tool_name: str, tool_input: object) -> bool:
     """
     Identifies narrowly recognized read-only diagnostic / control-plane calls.
@@ -59,7 +65,7 @@ def is_diagnostic_control_call(tool_name: str, tool_input: object) -> bool:
                 return False
         return True
 
-    # 2. Control call wrapped in exec / evaluate
+    # 2. Control call or harmless diagnostic probe wrapped in exec / evaluate
     if name in ("exec", "execute", "eval", "code_mode"):
         code = ""
         if isinstance(tool_input, dict):
@@ -72,13 +78,26 @@ def is_diagnostic_control_call(tool_name: str, tool_input: object) -> bool:
 
         code_str = code.strip()
 
-        # Reject any disallowed shell, file, messaging, or worktree operations
-        for pattern in DISALLOWED_EXEC_PATTERNS:
-            if re.search(pattern, code_str, re.IGNORECASE):
-                return False
-
-        # Allow only exact control call
+        # Check if it matches exact control call (e.g. tools.get_usage_limits())
         if ALLOWED_EXEC_CONTROL_REGEX.match(code_str):
+            for pattern in DISALLOWED_EXEC_PATTERNS:
+                if re.search(pattern, code_str, re.IGNORECASE):
+                    return False
+            return True
+
+        # Check if it matches a harmless read-only probe (e.g. pwd, true, date)
+        if ALLOWED_EXEC_PROBE_REGEX.match(code_str):
+            disallowed_probe_patterns = [
+                r"\breadFile\b", r"\bwriteFile\b", r"\beditFile\b", r"\bpatchFile\b",
+                r"\bcreateFile\b", r"\bappendFile\b", r"\bfs\.", r"\bopen\s*\(",
+                r"\bunlink\b", r"\brename\b", r"\bmkdir\b", r"\brm\s+",
+                r"\bsendMessage\b", r"\bsend_message\b", r"\binvoke_subagent\b",
+                r"\bsubagent\b", r"\bdispatch\b",
+                r"\bgit\s+", r"\bgit\b", r"\bworktree\b",
+                r"[;&|]",  # No shell command chaining
+            ]
+            if any(re.search(p, code_str, re.IGNORECASE) for p in disallowed_probe_patterns):
+                return False
             return True
 
     return False
@@ -279,6 +298,16 @@ def main():
         except (ValueError, TypeError):
             pass
 
+    # 4. If scheduled reset time has elapsed, the cached limit is stale; allow call to refresh
+    now_ts = time.time()
+    resets_at = primary.get("resets_at")
+    if resets_at is not None:
+        try:
+            if float(resets_at) <= now_ts:
+                sys.exit(0)
+        except (ValueError, TypeError):
+            pass
+
     if used_percent is not None and used_percent >= THRESHOLD_PERCENT:
         # Halt work tools: remaining limit < 2% (threshold: 98.0%)
         # Only generate handover once per halt state to avoid disk thrashing
@@ -293,8 +322,7 @@ def main():
             f"Current rate limit usage: {used_percent}% (threshold: {THRESHOLD_PERCENT}%).\n"
             f"Execution halted cleanly to preserve workspace integrity and avoid mid-edit termination.\n"
             f"HANDOVER.md is available at: {cwd}/HANDOVER.md\n"
-            f"DIAGNOSTIC NOTICE: Read-only `get_usage_limits` (or `tools.get_usage_limits()`) is permitted.\n"
-            f"If account quota was reset or refreshed, run `get_usage_limits` to append a fresh snapshot before resuming work tools.\n"
+            f"DIAGNOSTIC NOTICE: If your account quota has refreshed or was switched, run a lightweight read-only status probe (e.g. `await tools.exec_command({{ cmd: 'pwd' }})` or `get_usage_limits`) to record a fresh quota snapshot before continuing work.\n"
         )
         sys.exit(2)
 

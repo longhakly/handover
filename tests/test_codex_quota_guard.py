@@ -340,5 +340,54 @@ class TestCodexQuotaGuardRegression(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, f"Recovery failed: {proc.stderr}")
         self.assertLess(elapsed, 0.5, f"Expected < 0.5s for 10MB extraction, took {elapsed:.3f}s")
 
+    def test_resets_at_elapsed_permits_work(self):
+        """When scheduled resets_at has passed, cached snapshot is stale and work is permitted."""
+        self._write_stale_95_percent_transcript()
+        # 99.0% usage recorded, but resets_at was 10 seconds ago
+        self._append_event({
+            "type": "event_msg",
+            "timestamp": "2026-10-15T06:26:00Z",
+            "payload": {
+                "type": "token_count",
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": 99.0,
+                        "resets_at": int(time.time()) - 10
+                    }
+                }
+            }
+        })
+        res = self._run_guard("exec_command", {"cmd": "npm run build"})
+        self.assertEqual(res.returncode, 0, f"Elapsed resets_at must permit work tools, got {res.returncode}")
+
+    def test_read_only_probe_allowed_during_halt(self):
+        """Harmless read-only probes (pwd, true, date) are allowed in exec during quota halt."""
+        self._write_stale_95_percent_transcript()
+        self._append_event({
+            "type": "event_msg",
+            "timestamp": "2026-10-15T06:26:00Z",
+            "payload": {
+                "type": "token_count",
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": 99.0,
+                        "resets_at": int(time.time()) + 14400
+                    }
+                }
+            }
+        })
+
+        # Exact pwd probe
+        res_pwd = self._run_guard("exec", {"code": 'await tools.exec_command({ cmd: "pwd" })'})
+        self.assertEqual(res_pwd.returncode, 0, f"Expected 0 for pwd probe, got {res_pwd.returncode}")
+
+        # Exact true probe
+        res_true = self._run_guard("exec", {"code": 'tools.exec_command({ cmd: "true" })'})
+        self.assertEqual(res_true.returncode, 0, f"Expected 0 for true probe, got {res_true.returncode}")
+
+        # Chained command must be rejected
+        res_chained = self._run_guard("exec", {"code": 'await tools.exec_command({ cmd: "pwd; git push" })'})
+        self.assertEqual(res_chained.returncode, 2, f"Chained probe must be rejected with 2, got {res_chained.returncode}")
+
 if __name__ == "__main__":
     unittest.main()
