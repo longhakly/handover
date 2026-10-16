@@ -25,6 +25,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 HANDOVER_DIR = os.path.dirname(SCRIPT_DIR)
 GUARD_SCRIPT = os.path.join(HANDOVER_DIR, "scripts", "codex_quota_guard.py")
 RECOVERY_SCRIPT = os.path.join(HANDOVER_DIR, "scripts", "recover_last_codex_session.py")
+GENERATE_SCRIPT = os.path.join(HANDOVER_DIR, "scripts", "generate_handover.py")
+
+sys.path.insert(0, os.path.join(HANDOVER_DIR, "scripts"))
+from generate_handover import derive_case_slug, generate_handover
 
 class TestCodexQuotaGuardRegression(unittest.TestCase):
     def setUp(self):
@@ -388,6 +392,64 @@ class TestCodexQuotaGuardRegression(unittest.TestCase):
         # Chained command must be rejected
         res_chained = self._run_guard("exec", {"code": 'await tools.exec_command({ cmd: "pwd; git push" })'})
         self.assertEqual(res_chained.returncode, 2, f"Chained probe must be rejected with 2, got {res_chained.returncode}")
+
+    def test_derive_case_slug_explicit(self):
+        self.assertEqual(derive_case_slug(explicit_case="auth-refactor"), "auth-refactor")
+        self.assertEqual(derive_case_slug(explicit_case="HANDOVER_PP-123.md"), "PP-123")
+
+    def test_derive_case_slug_ticket(self):
+        slug = derive_case_slug(task_description="Fix PP-2574 stream chat display blank")
+        self.assertTrue(slug.startswith("PP-2574"), f"Expected to start with PP-2574, got {slug}")
+        self.assertIn("stream", slug)
+
+    def test_derive_case_slug_branch(self):
+        git_state = "### Repository: `front-end`\n- **Branch**: `feature/ENG-2454-auto-select-class-group`\n"
+        slug = derive_case_slug(task_description="Task transition", git_state=git_state)
+        self.assertEqual(slug, "ENG-2454-auto-select-class-group")
+
+    def test_multi_case_persistence_and_root_pointer(self):
+        """Generating multiple distinct cases creates distinct files and preserves past cases."""
+        # Case 1
+        res1 = generate_handover(self.cwd, task_description="Task One", explicit_case="case-alpha")
+        self.assertEqual(os.path.basename(res1), "HANDOVER_case-alpha.md")
+        self.assertTrue(os.path.exists(res1))
+        root_handover = os.path.join(self.cwd, "HANDOVER.md")
+        self.assertTrue(os.path.exists(root_handover))
+        with open(root_handover, "r", encoding="utf-8") as f:
+            self.assertIn("case-alpha", f.read())
+
+        # Case 2
+        res2 = generate_handover(self.cwd, task_description="Task Two", explicit_case="case-beta")
+        self.assertEqual(os.path.basename(res2), "HANDOVER_case-beta.md")
+        self.assertTrue(os.path.exists(res2))
+
+        # Crucial: Case 1 file MUST still exist! (No longer single file overwritten every time)
+        self.assertTrue(os.path.exists(res1), "Case 1 file must still exist after Case 2 generation!")
+        with open(root_handover, "r", encoding="utf-8") as f:
+            self.assertIn("case-beta", f.read())
+
+    def test_recover_last_codex_session_case_specific_file(self):
+        """Recovery script extracts ticket from session prompt and outputs case-specific file."""
+        self._write_stale_95_percent_transcript()
+        # Session prompt with ticket PP-2574
+        self._append_event({
+            "type": "response_item",
+            "payload": {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Resolve PP-2574 blank screen on stream chat"}]
+            }
+        })
+        proc = subprocess.run(
+            [sys.executable, RECOVERY_SCRIPT, self.session_file],
+            cwd=self.cwd,
+            capture_output=True,
+            text=True
+        )
+        self.assertEqual(proc.returncode, 0, f"Recovery failed: {proc.stderr}")
+        files = os.listdir(self.cwd)
+        case_files = [f for f in files if f.startswith("HANDOVER_PP-2574") and f.endswith(".md")]
+        self.assertTrue(len(case_files) >= 1, f"Expected HANDOVER_PP-2574-*.md in {files}")
+        self.assertTrue(os.path.exists(os.path.join(self.cwd, "HANDOVER.md")))
 
 if __name__ == "__main__":
     unittest.main()

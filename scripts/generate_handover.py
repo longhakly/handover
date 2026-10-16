@@ -9,10 +9,12 @@ Can be run:
    python3 scripts/generate_handover.py "Task description"
 """
 
+import argparse
 import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -53,8 +55,6 @@ def capture_git_state(workspace_root):
                 except Exception:
                     continue
     return "\n\n".join(reports) if reports else "No git changes detected."
-
-import shutil
 
 def sanitize_secrets(text: str) -> str:
     """Masks API keys, tokens, credentials, and private keys thoroughly."""
@@ -150,7 +150,88 @@ def extract_modified_files(git_state):
                         modified_files.append(file_rel)
     return modified_files
 
-def generate_handover(workspace_root, task_description="Task transition", outgoing_model="AI Agent", handover_reason="Manual transition / limit reached"):
+def derive_case_slug(
+    task_description: str = "",
+    git_state: str = "",
+    explicit_case: str = None,
+    branches: list = None
+) -> str:
+    """
+    Derives a concise, filesystem-safe case slug according to the following priority:
+    1. Explicit case name passed via flag or parameter.
+    2. Ticket / Issue key (e.g. PP-2574, ENG-2454) found in task description or active git branch.
+    3. Active non-default git branch across workspace repositories.
+    4. Task description keywords (kebab-cased, max 50 chars).
+    5. Fallback timestamp: session-YYYYMMDD-HHMMSS.
+    """
+    if explicit_case:
+        slug = explicit_case.strip()
+        slug = re.sub(r"^HANDOVER[_\-]", "", slug, flags=re.IGNORECASE)
+        slug = re.sub(r"\.md$", "", slug, flags=re.IGNORECASE)
+        slug = re.sub(r"[^a-zA-Z0-9_\-]+", "-", slug).strip("-")
+        if slug:
+            return slug
+
+    ticket_pattern = r"\b([A-Z]{2,10}-\d+)\b"
+
+    # Priority 2: Ticket / Issue key regex in task description
+    if task_description:
+        ticket_match = re.search(ticket_pattern, task_description)
+        if ticket_match:
+            ticket = ticket_match.group(1).upper()
+            remainder = task_description[:ticket_match.start()] + " " + task_description[ticket_match.end():]
+            words = re.findall(r"[a-zA-Z0-9]+", remainder)
+            noise = {"fix", "bug", "feature", "task", "issue", "the", "a", "an", "and", "or", "to", "in", "for", "on", "with"}
+            context_words = [w.lower() for w in words if w.lower() not in noise]
+            suffix = "-".join(context_words[:4])
+            return f"{ticket}-{suffix}" if suffix else ticket
+
+    # Extract branches from git_state or parameter
+    detected_branches = list(branches) if branches else []
+    if git_state:
+        branch_matches = re.findall(r"- \*\*Branch\*\*: `([^`()]+)`", git_state)
+        for b in branch_matches:
+            b_clean = b.strip().split()[0]
+            if b_clean not in detected_branches:
+                detected_branches.append(b_clean)
+
+    ignored_branches = {"main", "master", "dev", "develop", "staging", "head", "unknown"}
+    active_branches = [
+        b for b in detected_branches
+        if b.lower() not in ignored_branches and not b.startswith("HEAD")
+    ]
+
+    for b in active_branches:
+        b_clean = re.sub(r"^(?:feature|bugfix|hotfix|chore|refactor|test)/", "", b, flags=re.IGNORECASE)
+        b_slug = re.sub(r"[^a-zA-Z0-9_\-]+", "-", b_clean).strip("-")
+        if b_slug:
+            return b_slug[:50].rstrip("-")
+
+    # Priority 4: Task description keywords
+    if task_description:
+        clean_desc = task_description.strip()
+        generic_phrases = {"task transition", "task in progress", "manual transition", "session handover", "handover"}
+        if clean_desc.lower() not in generic_phrases:
+            words = re.findall(r"[a-zA-Z0-9]+", clean_desc)
+            if words:
+                slug = "-".join(w.lower() for w in words[:6])
+                slug = slug[:50].rstrip("-")
+                if slug:
+                    return slug
+
+    # Priority 5: Fallback timestamp
+    now_str = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"session-{now_str}"
+
+def generate_handover(
+    workspace_root,
+    task_description="Task transition",
+    outgoing_model="AI Agent",
+    handover_reason="Manual transition / limit reached",
+    explicit_case=None,
+    output_dir=None,
+    update_root_pointer=True,
+):
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     git_state = capture_git_state(workspace_root)
     val_commands = detect_validation_commands(workspace_root)
@@ -160,6 +241,8 @@ def generate_handover(workspace_root, task_description="Task transition", outgoi
     files_section = "\n".join(f"- `{f}`: Modified / staged status" for f in modified) if modified else "- No tracked files in dirty status"
 
     clean_task = sanitize_secrets(task_description)
+    case_slug = derive_case_slug(task_description=clean_task, git_state=git_state, explicit_case=explicit_case)
+    case_filename = f"HANDOVER_{case_slug}.md"
 
     content = f"""# Session Handover Document
 
@@ -170,6 +253,7 @@ def generate_handover(workspace_root, task_description="Task transition", outgoi
 ## 1. Executive Context
 
 - **Original Task**: {clean_task}
+- **Case Identifier**: `{case_slug}`
 - **Outgoing Model**: {outgoing_model}
 - **Handover Reason**: {handover_reason}
 - **Timestamp**: {now_str}
@@ -241,20 +325,23 @@ def generate_handover(workspace_root, task_description="Task transition", outgoi
 
 ```markdown
 You are continuing a task handed over from {outgoing_model}.
-Please read `HANDOVER.md` in the project root to understand the full context, in-flight changes, and completed milestones.
+Please read `{case_filename}` in the project root to understand the full context, in-flight changes, and completed milestones.
 
 Goal:
 - Task: {clean_task}
+- Case Identifier: {case_slug}
 
 Next Action:
-1. Inspect the touched files in `HANDOVER.md`.
+1. Inspect the touched files in `{case_filename}`.
 2. Run validation tests to confirm baseline integrity.
 3. Complete any remaining requirements and run the mandatory final review.
 
 Proceed immediately with reviewing the current state and completing the task.
 ```
 """
-    target = os.path.join(workspace_root, "HANDOVER.md")
+    target_dir = output_dir if output_dir else workspace_root
+    target = os.path.join(target_dir, case_filename)
+
     if os.path.exists(target):
         backup_path = f"{target}.bak"
         try:
@@ -265,13 +352,38 @@ Proceed immediately with reviewing the current state and completing the task.
 
     with open(target, "w", encoding="utf-8") as f:
         f.write(sanitize_secrets(content))
+
+    root_pointer = os.path.join(workspace_root, "HANDOVER.md")
+    if update_root_pointer and os.path.abspath(target) != os.path.abspath(root_pointer):
+        try:
+            if os.path.exists(root_pointer):
+                backup_pointer = f"{root_pointer}.bak"
+                shutil.copy2(root_pointer, backup_pointer)
+            shutil.copy2(target, root_pointer)
+        except Exception as e:
+            print(f"Warning: Failed to update root HANDOVER.md: {e}", file=sys.stderr)
+
     return target
 
 def main():
+    parser = argparse.ArgumentParser(description="Universal case-specific HANDOVER generator.")
+    parser.add_argument("task", nargs="*", default=[], help="Task description or objective")
+    parser.add_argument("--case", "-c", dest="case_name", default=None, help="Explicit case name (e.g. PP-2574-fix)")
+    parser.add_argument("--output-dir", "-d", dest="output_dir", default=None, help="Directory to save handover file")
+    args = parser.parse_args()
+
     workspace_root = os.getcwd()
-    task_desc = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "Task in progress"
-    target = generate_handover(workspace_root, task_description=task_desc)
+    task_desc = " ".join(args.task) if args.task else "Task in progress"
+    target = generate_handover(
+        workspace_root,
+        task_description=task_desc,
+        explicit_case=args.case_name,
+        output_dir=args.output_dir
+    )
     print(f"Successfully generated {target}")
+    root_pointer = os.path.join(workspace_root, "HANDOVER.md")
+    if os.path.abspath(target) != os.path.abspath(root_pointer):
+        print(f"Updated latest pointer: {root_pointer}")
 
 if __name__ == "__main__":
     main()

@@ -321,7 +321,7 @@ def main():
             f"\n[EMERGENCY HANDOVER TRIGGERED - REMAINING LIMIT < 2%]\n"
             f"Current rate limit usage: {used_percent}% (threshold: {THRESHOLD_PERCENT}%).\n"
             f"Execution halted cleanly to preserve workspace integrity and avoid mid-edit termination.\n"
-            f"HANDOVER.md is available at: {cwd}/HANDOVER.md\n"
+            f"Handover document is available at: {cwd}/HANDOVER.md (and case-specific HANDOVER_<case>.md)\n"
             f"DIAGNOSTIC NOTICE: If your account quota has refreshed or was switched, run a lightweight read-only status probe (e.g. `await tools.exec_command({{ cmd: 'pwd' }})` or `get_usage_limits`) to record a fresh quota snapshot before continuing work.\n"
         )
         sys.exit(2)

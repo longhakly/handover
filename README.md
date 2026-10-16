@@ -17,6 +17,7 @@ Whenever limits approach exhaustion—or whenever you trigger a handover—this 
 ## ⚡ Key Features
 
 * 🔄 **Zero-Loss Model Transitions**: Move smoothly between models (Claude $\leftrightarrow$ Gemini $\leftrightarrow$ Codex $\leftrightarrow$ Cursor) with a single copy-paste continuation prompt.
+* 🗂️ **Case-Specific Handover Persistence**: Generates case-specific files (`HANDOVER_<case_slug>.md`) based on ticket IDs, feature branches, or explicit `--case` names so multiple tasks are preserved without overwriting each other, while synchronizing `HANDOVER.md` as the latest active pointer.
 * 📋 **Standardized 9-Section Specification**: Persists **Problem Description**, **Current Behavior**, **Desired Behavior**, **Milestones**, **Uncommitted Diffs**, and **Ordered Next Steps**.
 * 🛡️ **Automated Quota Guard (Codex CLI)**: Intercepts tool calls at 98% rate-limit usage (< 2% remaining quota), halting cleanly before unexpected 429 crashes occur, with narrow read-only diagnostic allowance (`get_usage_limits`) to refresh live account quota.
 * 💬 **Native Slash Command (Claude Code)**: Includes `.claude/commands/handover.md` so Claude users can simply type `/handover`.
@@ -160,13 +161,17 @@ When asked for a "handover" or "prepare handover doc":
 
 ### ⚪ 5. Standalone Terminal CLI (Any Tool / No Agent)
 
-You can also generate `HANDOVER.md` directly from your terminal at any time without waiting for an LLM:
+You can also generate handover files directly from your terminal at any time without waiting for an LLM:
 
 ```bash
-python3 scripts/generate_handover.py "Short summary of current task"
+# Auto-detects case from prompt or active git branch
+python3 scripts/generate_handover.py "Fix PP-2574 stream chat blank display"
+
+# Explicit case name
+python3 scripts/generate_handover.py --case PP-2574 "Fix stream chat display"
 ```
 
-This immediately inspects git state, detects test runners, scrubs secrets, and outputs a complete `HANDOVER.md`.
+This immediately inspects git state, detects test runners, scrubs secrets, outputs a case-specific `HANDOVER_<case_slug>.md` file (e.g. `HANDOVER_PP-2574-stream-chat.md`), and updates `HANDOVER.md` in the project root as the latest active pointer.
 
 ---
 

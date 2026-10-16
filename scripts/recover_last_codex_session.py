@@ -10,6 +10,7 @@ Works both:
 2. Post-mortem after Codex process crashes, rate limits (HTTP 429), or abrupt exits.
 """
 
+import argparse
 import glob
 import json
 import os
@@ -17,7 +18,20 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
+
+try:
+    from generate_handover import derive_case_slug
+except ImportError:
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    if _script_dir not in sys.path:
+        sys.path.insert(0, _script_dir)
+    try:
+        from generate_handover import derive_case_slug
+    except ImportError:
+        def derive_case_slug(task_description="", git_state="", explicit_case=None, branches=None):
+            return "session-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 def session_matches_cwd(session_path: str, target_cwd: str) -> bool:
     """Verifies that a session log belongs to the specified workspace directory."""
@@ -404,7 +418,7 @@ def detect_guidelines(workspace_root):
         return f"Strictly follow project conventions in {', '.join(guidelines)}."
     return "Follow clean architecture, minimal diffs, and existing project conventions."
 
-def generate_handover_content(workspace_root, details):
+def generate_handover_content(workspace_root, details, case_slug=None):
     session_goals = parse_session_goals(details["user_requests"])
     active_goal = session_goals["active_goal"]
     initial_goal = session_goals["initial_goal"]
@@ -418,6 +432,10 @@ def generate_handover_content(workspace_root, details):
     git_state = capture_git_state(workspace_root)
     val_commands = detect_validation_commands(workspace_root)
     guideline_rules = detect_guidelines(workspace_root)
+
+    if not case_slug:
+        case_slug = derive_case_slug(task_description=active_goal, git_state=git_state)
+    case_filename = f"HANDOVER_{case_slug}.md"
 
     # Analyze agent messages to determine stage and completed work (with secret scrubbing)
     agent_msgs = details["agent_messages"]
@@ -521,6 +539,7 @@ def generate_handover_content(workspace_root, details):
 ## 1. Executive Context
 
 - **Active Task (In-Flight)**: {active_goal}
+- **Case Identifier**: `{case_slug}`
 - **Outgoing Model / Environment**: {model_name}
 - **Handover Trigger / Reason**: {handover_reason}
 - **Timestamp**: {now_str}
@@ -599,14 +618,15 @@ def generate_handover_content(workspace_root, details):
 
 ```markdown
 You are continuing a task handed over from {model_name}.
-Please read `HANDOVER.md` in the project root to understand the full context, in-flight changes, and completed milestones.
+Please read `{case_filename}` in the project root to understand the full context, in-flight changes, and completed milestones.
 
 Goal:
 - Active Task: {active_goal}
+- Case Identifier: {case_slug}
 - Outgoing State: {latest_summary}
 
 Next Action:
-1. Inspect the touched files in `HANDOVER.md`.
+1. Inspect the touched files in `{case_filename}`.
 2. Run validation tests to confirm baseline integrity.
 3. Complete any remaining requirements for '{active_goal}' and run the mandatory final review.
 
@@ -616,19 +636,26 @@ Proceed immediately with reviewing the current state and completing the task.
     return sanitize_secrets(handover_md)
 
 def main():
-    workspace_root = os.getcwd()
-    session_file = None
+    parser = argparse.ArgumentParser(description="Codex session recovery and case-specific HANDOVER generator.")
+    parser.add_argument("session_file", nargs="?", default=None, help="Path to session JSONL file")
+    parser.add_argument("--case", "-c", dest="case_name", default=None, help="Explicit case name (e.g. PP-2574-fix)")
+    parser.add_argument("--cwd", dest="cwd", default=None, help="Workspace root directory")
+    args, _ = parser.parse_known_args()
 
-    if len(sys.argv) > 1:
-        session_file = sys.argv[1]
-    elif not sys.stdin.isatty():
+    workspace_root = os.path.realpath(args.cwd) if args.cwd else os.getcwd()
+    session_file = args.session_file
+    explicit_case = args.case_name
+
+    if not session_file and not sys.stdin.isatty():
         try:
             stdin_data = sys.stdin.read().strip()
             if stdin_data:
                 hook_input = json.loads(stdin_data)
                 session_file = hook_input.get("transcript_path") or hook_input.get("session_path")
                 if "cwd" in hook_input:
-                    workspace_root = hook_input["cwd"]
+                    workspace_root = os.path.realpath(hook_input["cwd"])
+                if "case" in hook_input and not explicit_case:
+                    explicit_case = hook_input["case"]
         except Exception:
             pass
 
@@ -645,21 +672,58 @@ def main():
     if details['last_error']:
         print(f"Last error: {details['last_error'].get('codex_error_info')} - {details['last_error'].get('message')}")
 
-    handover_text = generate_handover_content(workspace_root, details)
+    session_goals = parse_session_goals(details["user_requests"])
+    active_goal = session_goals["active_goal"]
+    git_state = capture_git_state(workspace_root)
+    case_slug = derive_case_slug(task_description=active_goal, git_state=git_state, explicit_case=explicit_case)
+    case_filename = f"HANDOVER_{case_slug}.md"
 
-    target_handover_path = os.path.join(workspace_root, "HANDOVER.md")
-    if os.path.exists(target_handover_path):
-        backup_path = f"{target_handover_path}.bak"
+    handover_text = generate_handover_content(workspace_root, details, case_slug=case_slug)
+
+    target_case_path = os.path.join(workspace_root, case_filename)
+    if os.path.exists(target_case_path):
+        backup_path = f"{target_case_path}.bak"
         try:
-            shutil.copy2(target_handover_path, backup_path)
-            print(f"Backed up existing {target_handover_path} to {backup_path}")
+            shutil.copy2(target_case_path, backup_path)
+            print(f"Backed up existing {target_case_path} to {backup_path}")
         except Exception as e:
             print(f"Warning: Failed to create backup: {e}", file=sys.stderr)
 
-    with open(target_handover_path, "w", encoding="utf-8") as f:
+    with open(target_case_path, "w", encoding="utf-8") as f:
         f.write(handover_text)
 
-    print(f"Successfully generated {target_handover_path}")
+    # Update latest pointer HANDOVER.md
+    target_root_path = os.path.join(workspace_root, "HANDOVER.md")
+    if os.path.abspath(target_case_path) != os.path.abspath(target_root_path):
+        try:
+            if os.path.exists(target_root_path):
+                backup_root = f"{target_root_path}.bak"
+                shutil.copy2(target_root_path, backup_root)
+            shutil.copy2(target_case_path, target_root_path)
+        except Exception as e:
+            print(f"Warning: Failed to update root HANDOVER.md: {e}", file=sys.stderr)
+
+    # Record marker for quota guard
+    state_dir = os.path.join(workspace_root, ".agents/skills/handover")
+    if os.path.exists(state_dir):
+        state_marker = os.path.join(state_dir, ".last_handover_halt.json")
+        try:
+            state_data = {
+                "transcript_path": session_file,
+                "timestamp": time.time(),
+                "handover_file": target_case_path,
+                "case_slug": case_slug,
+            }
+            if details.get("last_rate_limits") and details["last_rate_limits"].get("primary"):
+                state_data["used_percent"] = details["last_rate_limits"]["primary"].get("used_percent")
+            with open(state_marker, "w", encoding="utf-8") as f:
+                json.dump(state_data, f)
+        except Exception:
+            pass
+
+    print(f"Successfully generated {target_case_path}")
+    if os.path.abspath(target_case_path) != os.path.abspath(target_root_path):
+        print(f"Updated latest pointer: {target_root_path}")
 
 if __name__ == "__main__":
     main()

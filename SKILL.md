@@ -1,10 +1,10 @@
 ---
 name: handover
 description: >-
-  Halt active work and generate a structured HANDOVER.md file when context window capacity,
-  token budget, or rate limits drop under 5%, or when the user requests a model transition
-  between Codex and Gemini (or Claude). Captures completed work, in-flight state, next steps,
-  and provides an exact continuation prompt for the next model to resume seamlessly.
+  Halt active work and generate a structured, case-specific handover document (HANDOVER_<case_slug>.md
+  and root HANDOVER.md) when context window capacity, token budget, or rate limits drop under 5%, or when
+  the user requests a model transition between Codex and Gemini (or Claude). Captures completed work,
+  in-flight state, next steps, and provides an exact continuation prompt for the next model to resume seamlessly.
 ---
 
 # Handover Skill
@@ -40,12 +40,19 @@ bash .agents/skills/handover/scripts/capture_handover_state.sh
 
 *(If outside the workspace root, run the script relative to where the skill is located).*
 
-### Step 3: Populate `HANDOVER.md` in Workspace Root
-Create or overwrite `HANDOVER.md` at the project root using the standard structure defined in
+### Step 3: Populate Case-Specific Handover Document in Workspace Root
+Create the case-specific handover file at the project root: `HANDOVER_<case_slug>.md` (and update `HANDOVER.md` as the latest pointer) using the standard structure defined in
 [`templates/HANDOVER_TEMPLATE.md`](./templates/HANDOVER_TEMPLATE.md):
+
+**Case Slug Derivation**:
+- If working on a ticket (e.g., `PP-2574`, `ENG-2454`): name the file `HANDOVER_<TICKET>-<brief-slug>.md` (e.g., `HANDOVER_PP-2574-stream-chat-blank.md`).
+- If working on a feature/bugfix branch: derive slug from the branch name without prefix (e.g., `feature/ENG-2454-auto-select-class` -> `HANDOVER_ENG-2454-auto-select-class.md`).
+- If working on a general task: sanitize the task objective into kebab-case (e.g., `HANDOVER_tool-selection-audit.md`).
+- Always update or copy to `HANDOVER.md` at the project root so automated tools and quick prompts find the latest handover immediately.
 
 1. **Header & Context**:
    - Original Task & Goal
+   - Case Identifier (e.g., `PP-2574-stream-chat-blank`)
    - Outgoing Model (e.g., `Gemini 3.8 Flash` or `Codex o3-mini` / `gpt-4.5`)
    - Handover Reason (e.g., `< 2% context limit reached`, `token quota`, `manual switch`)
    - Date & Time
@@ -71,12 +78,12 @@ Create or overwrite `HANDOVER.md` at the project root using the standard structu
    - Passing tests vs pending tests.
    - Commands to validate (e.g., `pytest`, `npm test`, `npm run build`).
 9. **Continuation Prompt for Incoming Model**:
-   - A crisp, self-contained prompt formatted in a markdown code block that the user can immediately paste into Codex, Gemini, or Claude.
+   - A crisp, self-contained prompt formatted in a markdown code block that the user can immediately paste into Codex, Gemini, or Claude, referencing `HANDOVER_<case_slug>.md`.
 
 ### Step 4: User Notification
 Conclude your response immediately with:
-1. A concise 2–3 line summary stating that the handover document has been written to `HANDOVER.md`.
-2. The copy-pasteable continuation prompt for the next model.
+1. A concise 2–3 line summary stating that the handover document has been written to `HANDOVER_<case_slug>.md` (and updated in `HANDOVER.md`).
+2. The copy-pasteable continuation prompt for the next model referencing `HANDOVER_<case_slug>.md`.
 
 ---
 

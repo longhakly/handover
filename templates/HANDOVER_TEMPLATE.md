@@ -7,6 +7,7 @@
 ## 1. Executive Context
 
 - **Original Task**: {Short description of the user request}
+- **Case Identifier**: `{e.g. PP-2574-stream-chat-blank}`
 - **Outgoing Model**: {e.g. Gemini 3.8 Flash / OpenAI Codex}
 - **Handover Reason**: {e.g. Context headroom < 2% / Quota limit reached (>= 98%) / User requested switch}
 - **Timestamp**: {ISO timestamp or current date & time}
@@ -80,10 +81,11 @@
 
 ```markdown
 You are continuing a task handed over from another model.
-Please read `HANDOVER.md` in the project root to understand full context, current progress, and technical invariants.
+Please read `HANDOVER_{case_slug}.md` (or `HANDOVER.md`) in the project root to understand full context, current progress, and technical invariants.
 
 Current immediate objective:
 - Pick up at Step {N}: {Brief description of next task}
+- Case Identifier: {case_slug}
 - Target file(s): `{filepath}`
 - Ensure all rules in `AGENTS.md` and `ENGINEERING_MEMORY.md` are respected.
 

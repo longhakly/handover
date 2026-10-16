@@ -8,8 +8,8 @@ Execute the Handover Protocol:
    ```bash
    bash scripts/capture_handover_state.sh || bash .agents/skills/handover/scripts/capture_handover_state.sh
    ```
-3. **Generate `HANDOVER.md`**: Create or update `HANDOVER.md` in the project root following the 9-section standard in `templates/HANDOVER_TEMPLATE.md`:
-   - **Section 1: Executive Context**: Task description, Outgoing Model ("Claude Code"), Handover Reason, Timestamp, Branch.
+3. **Generate Handover Document**: Create or update the case-specific `HANDOVER_<case_slug>.md` (and update `HANDOVER.md` as the latest pointer) in the project root following the 9-section standard in `templates/HANDOVER_TEMPLATE.md`:
+   - **Section 1: Executive Context**: Task description, Case Identifier, Outgoing Model ("Claude Code"), Handover Reason, Timestamp, Branch.
    - **Section 2: Problem & Behavior Specification**:
      - `Description`: The problem, feature, or request.
      - `Current Behavior`: Current state, error logs, or baseline behavior.
